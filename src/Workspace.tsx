@@ -27,20 +27,80 @@ export default function Workspace({ client, userId, onSignOut, signOutFailed }: 
     <HashRouter>
       <header className="site-header">
         <div className="site-header-inner">
-          <Link className="brand" to="/">Мероприятия</Link>
+          <Link className="brand" to="/">CRM</Link>
+          <nav aria-label="Основное меню" className="event-nav"><Link to="/">Мой рабочий стол</Link><Link to="/events">Мероприятия</Link></nav>
           <button type="button" className="button" onClick={onSignOut}>Выйти</button>
         </div>
       </header>
       <main className="workspace">
         {signOutFailed && <p role="alert" className="message error">Не удалось выйти. Попробуйте ещё раз.</p>}
         <Routes>
-          <Route path="/" element={<EventList client={client} />} />
+          <Route path="/" element={<PersonalDashboard client={client} userId={userId} />} />
+          <Route path="/events" element={<EventList client={client} />} />
           <Route path="/events/:eventId/*" element={<EventRoute client={client} userId={userId} />} />
           <Route path="*" element={<Unavailable>Страница не найдена.</Unavailable>} />
         </Routes>
       </main>
     </HashRouter>
   )
+}
+
+function PersonalDashboard({ client, userId }: EventReader) {
+  const [state, setState] = useState<RequestState<EventWorkspace[]>>(null)
+  useEffect(() => {
+    const controller = new AbortController()
+    void (async () => {
+      const events = await loadEvents(client, controller.signal)
+      const workspaces = await Promise.all(events.filter((event) => event.status !== 'archived')
+        .map((event) => loadEvent(client, event.id, userId, controller.signal)))
+      if (!controller.signal.aborted) setState({ data: workspaces.filter((model): model is EventWorkspace => model !== null) })
+    })().catch(() => {
+      if (!controller.signal.aborted) setState({ error: 'Не удалось загрузить рабочий стол.' })
+    })
+    return () => controller.abort()
+  }, [client, userId])
+
+  if (!state) return <p role="status">Загружаем рабочий стол…</p>
+  if (state.error) return <p role="alert" className="message error">{state.error}</p>
+
+  const now = Date.now()
+  const mine = state.data.flatMap((model) => model.tasks
+    .filter((task) => (task.owner_id === userId || model.assignedTasks.has(task.id)) &&
+      task.status !== 'done' && task.status !== 'cancelled')
+    .map((task) => ({ task, model })))
+  const overdue = mine.filter(({ task }) => isOverdue(task, now)).length
+  const today = mine.filter(({ task }) => task.due_at && !isOverdue(task, now) &&
+    deadlineDay(task.due_at) === deadlineDay(new Date(now).toISOString())).length
+  const ordered = [...mine].sort((a, b) =>
+    (a.task.due_at ? Date.parse(a.task.due_at) : Infinity) -
+    (b.task.due_at ? Date.parse(b.task.due_at) : Infinity))
+
+  return <div className="dashboard">
+    <div className="section-heading"><h1>Мой рабочий стол</h1><Link to="/events">Все мероприятия</Link></div>
+    <ul className="card-grid metric-grid">
+      <li className="panel metric"><strong>{mine.length}</strong><span>Мои открытые задачи</span></li>
+      <li className="panel metric"><strong>{today}</strong><span>Срок сегодня</span></li>
+      <li className="panel metric"><strong>{overdue}</strong><span>Просрочено</span></li>
+    </ul>
+    <section>
+      <h2>Мои задачи</h2>
+      {ordered.length === 0 ? <p className="message">Нет открытых задач, назначенных вам.</p> :
+        <ul className="card-grid">{ordered.slice(0, 20).map(({ task, model }) =>
+          <li className="panel" key={task.id}>
+            <Link className="card-title" to={`/events/${model.event.id}/tasks/${task.id}`}>{task.title}</Link>
+            <p>{model.event.name} · {taskStatuses[task.status]}</p>
+            {task.due_at && <p>{isOverdue(task, now) ? 'Просрочено · ' : 'Срок · '}{formatDate(task.due_at)}</p>}
+          </li>)}</ul>}
+      {ordered.length > 20 && <p>Показаны первые 20 задач по сроку.</p>}
+    </section>
+    <section>
+      <h2>Мои мероприятия</h2>
+      <ul className="card-grid">{state.data.map((model) => <li className="panel" key={model.event.id}>
+        <Link className="card-title" to={`/events/${model.event.id}`}>{model.event.name}</Link>
+        <p>{model.coordinator ? 'Координатор' : 'Участник'} · {formatDate(model.event.starts_at)}</p>
+      </li>)}</ul>
+    </section>
+  </div>
 }
 
 function EventList({ client }: { client: SupabaseClient }) {
@@ -122,7 +182,7 @@ function EventPage({ client, eventId, userId }: EventReader & { eventId: string 
   }
   return <>
     <div className="event-heading">
-      <Link className="back-link" to="/">Все мероприятия</Link>
+      <Link className="back-link" to="/events">Все мероприятия</Link>
       <h1>{event.name}</h1>
       <p>
         <span className="status">{eventStatuses[event.status]}</span>
