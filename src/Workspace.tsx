@@ -63,8 +63,9 @@ function PersonalDashboard({ client, userId }: EventReader) {
   if (!state) return <p role="status">Загружаем рабочий стол…</p>
   if (state.error) return <p role="alert" className="message error">{state.error}</p>
 
+  const workspaces = state.data ?? []
   const now = Date.now()
-  const mine = state.data.flatMap((model) => model.tasks
+  const mine = workspaces.flatMap((model) => model.tasks
     .filter((task) => (task.owner_id === userId || model.assignedTasks.has(task.id)) &&
       task.status !== 'done' && task.status !== 'cancelled')
     .map((task) => ({ task, model })))
@@ -95,7 +96,7 @@ function PersonalDashboard({ client, userId }: EventReader) {
     </section>
     <section>
       <h2>Мои мероприятия</h2>
-      <ul className="card-grid">{state.data.map((model) => <li className="panel" key={model.event.id}>
+      <ul className="card-grid">{workspaces.map((model) => <li className="panel" key={model.event.id}>
         <Link className="card-title" to={`/events/${model.event.id}`}>{model.event.name}</Link>
         <p>{model.coordinator ? 'Координатор' : 'Участник'} · {formatDate(model.event.starts_at)}</p>
       </li>)}</ul>
