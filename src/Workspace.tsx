@@ -73,15 +73,21 @@ function PersonalDashboard({ client, userId }: EventReader) {
         if (!controller.signal.aborted) setTasksLoading(false)
         return
       }
-      const queriesStarted = performance.now()
+      const timed = async <T,>(name: string, query: PromiseLike<T>): Promise<T> => {
+        const startedAt = performance.now()
+        try {
+          return await query
+        } finally {
+          mark(name, performance.now() - startedAt)
+        }
+      }
       const [owned, assigned] = await Promise.all([
-        client.from('tasks').select('id,event_id,title,status,due_at,owner_id')
+        timed('Задачи ответственного', client.from('tasks').select('id,event_id,title,status,due_at,owner_id')
           .in('event_id', ids).eq('owner_id', userId).not('status', 'in', '("done","cancelled")')
-          .abortSignal(controller.signal),
-        client.from('task_assignees').select('task_id').eq('user_id', userId).eq('active', true)
-          .in('event_id', ids).abortSignal(controller.signal),
+          .abortSignal(controller.signal)),
+        timed('Назначения задач', client.from('task_assignees').select('task_id').eq('user_id', userId).eq('active', true)
+          .in('event_id', ids).abortSignal(controller.signal)),
       ])
-      mark('Запросы ответственных и назначений', performance.now() - queriesStarted)
       if (owned.error || assigned.error) throw new Error('Не удалось загрузить задачи.')
       const assignedIds = [...new Set((assigned.data ?? []).map((row) => row.task_id))]
       let assignedTasks: PersonalTask[] = []
