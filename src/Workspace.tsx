@@ -278,10 +278,10 @@ function DirectionCard({ model, client, leadershipSaved }: {
     {model.coordinator && <p><Link to={`${base}/sections?section=direction&edit=${department.id}`}>
       Редактировать направление
     </Link></p>}
+    <DirectionLeadership key={department.id} client={client} model={model} departmentId={department.id} saved={leadershipSaved} />
     {department.ticket_workspace && <TicketWorkspace client={client} eventId={model.event.id}
       departmentId={department.id} coordinator={model.coordinator}
       canManage={!department.archived && managesDepartment(model, department.id)} />}
-    <DirectionLeadership key={department.id} client={client} model={model} departmentId={department.id} saved={leadershipSaved} />
     <DirectionRecords key={department.id} client={client} model={model} department={department} />
     <p><Link to={`${base}/tasks?department=${department.id}`}>Задачи направления</Link></p>
     {tasks.length > 0 ? <TaskRows tasks={tasks} model={model} /> : <p>Задач пока нет.</p>}
