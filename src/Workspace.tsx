@@ -55,10 +55,16 @@ function PersonalDashboard({ client, userId }: EventReader) {
   const [state, setState] = useState<RequestState<PersonalData>>(null)
   const [tasksLoading, setTasksLoading] = useState(true)
   const [tasksError, setTasksError] = useState(false)
+  const [taskDiagnostics, setTaskDiagnostics] = useState<string[]>([])
   useEffect(() => {
     const controller = new AbortController()
     setTasksLoading(true)
     setTasksError(false)
+    setTaskDiagnostics([])
+    const started = performance.now()
+    const mark = (name: string, ms: number) => {
+      if (!controller.signal.aborted) setTaskDiagnostics((previous) => [...previous, `${name}: ${(ms / 1000).toFixed(1)} с`])
+    }
     void (async () => {
       const events = (await loadEvents(client, controller.signal)).filter((event) => event.status !== 'archived')
       if (!controller.signal.aborted) setState({ data: { events, tasks: [] } })
@@ -67,6 +73,7 @@ function PersonalDashboard({ client, userId }: EventReader) {
         if (!controller.signal.aborted) setTasksLoading(false)
         return
       }
+      const queriesStarted = performance.now()
       const [owned, assigned] = await Promise.all([
         client.from('tasks').select('id,event_id,title,status,due_at,owner_id')
           .in('event_id', ids).eq('owner_id', userId).not('status', 'in', '("done","cancelled")')
@@ -74,9 +81,11 @@ function PersonalDashboard({ client, userId }: EventReader) {
         client.from('task_assignees').select('task_id').eq('user_id', userId).eq('active', true)
           .in('event_id', ids).abortSignal(controller.signal),
       ])
+      mark('Запросы ответственных и назначений', performance.now() - queriesStarted)
       if (owned.error || assigned.error) throw new Error('Не удалось загрузить задачи.')
       const assignedIds = [...new Set((assigned.data ?? []).map((row) => row.task_id))]
       let assignedTasks: PersonalTask[] = []
+      const assignedStarted = performance.now()
       for (let i = 0; i < assignedIds.length; i += 100) {
         const response = await client.from('tasks').select('id,event_id,title,status,due_at,owner_id')
           .in('id', assignedIds.slice(i, i + 100)).in('event_id', ids)
@@ -84,6 +93,8 @@ function PersonalDashboard({ client, userId }: EventReader) {
         if (response.error) throw new Error('Не удалось загрузить назначенные задачи.')
         assignedTasks = assignedTasks.concat((response.data ?? []) as PersonalTask[])
       }
+      mark('Загрузка назначенных задач', performance.now() - assignedStarted)
+      mark('Всего с начала загрузки', performance.now() - started)
       const tasks = [...new Map([...((owned.data ?? []) as PersonalTask[]), ...assignedTasks]
         .map((task) => [task.id, task])).values()]
       if (!controller.signal.aborted) {
@@ -130,6 +141,8 @@ function PersonalDashboard({ client, userId }: EventReader) {
             {task.due_at && <p>{isPersonalTaskOverdue(task, now) ? 'Просрочено · ' : 'Срок · '}{formatDate(task.due_at)}</p>}
           </li>)}</ul>}
       {ordered.length > 20 && <p>Показаны первые 20 задач по сроку.</p>}
+      {(tasksLoading || tasksError) && <p className="message">Если загрузка длится долго, сообщи мне, что показано здесь.</p>}
+      {taskDiagnostics.length > 0 && <p className="message">Диагностика: {taskDiagnostics.join(" · ")}</p>}
     </section>
     <section>
       <h2>Мои мероприятия</h2>
