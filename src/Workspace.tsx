@@ -409,8 +409,8 @@ function TaskList({ model }: { model: EventWorkspace }) {
       (!owner || owner === task.owner_id) &&
       (!status || status === task.status) &&
       (!leaf || (!parentIds.has(task.id) && task.status !== 'cancelled')) &&
-      (deadline !== 'overdue' || isPersonalTaskOverdue(task, now)) &&
-      (deadline !== 'upcoming' || (task.due_at !== null && !isPersonalTaskOverdue(task, now) &&
+      (deadline !== 'overdue' || isOverdue(task, now)) &&
+      (deadline !== 'upcoming' || (task.due_at !== null && !isOverdue(task, now) &&
         task.status !== 'done' && task.status !== 'cancelled'))
   }).sort((a, b) => (a.due_at ? Date.parse(a.due_at) : Infinity) -
     (b.due_at ? Date.parse(b.due_at) : Infinity) || a.title.localeCompare(b.title, 'ru'))
