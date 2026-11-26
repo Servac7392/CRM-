@@ -45,15 +45,40 @@ export default function Workspace({ client, userId, onSignOut, signOutFailed }: 
   )
 }
 
+type PersonalTask = Pick<Task, 'id' | 'title' | 'status' | 'due_at' | 'owner_id'> & { event_id: string }
+type PersonalData = { events: EventSummary[]; tasks: PersonalTask[] }
+
 function PersonalDashboard({ client, userId }: EventReader) {
-  const [state, setState] = useState<RequestState<EventWorkspace[]>>(null)
+  const [state, setState] = useState<RequestState<PersonalData>>(null)
   useEffect(() => {
     const controller = new AbortController()
     void (async () => {
-      const events = await loadEvents(client, controller.signal)
-      const workspaces = await Promise.all(events.filter((event) => event.status !== 'archived')
-        .map((event) => loadEvent(client, event.id, userId, controller.signal)))
-      if (!controller.signal.aborted) setState({ data: workspaces.filter((model): model is EventWorkspace => model !== null) })
+      const events = (await loadEvents(client, controller.signal)).filter((event) => event.status !== 'archived')
+      const ids = events.map((event) => event.id)
+      if (ids.length === 0) {
+        if (!controller.signal.aborted) setState({ data: { events, tasks: [] } })
+        return
+      }
+      const [owned, assigned] = await Promise.all([
+        client.from('tasks').select('id,event_id,title,status,due_at,owner_id')
+          .in('event_id', ids).eq('owner_id', userId).not('status', 'in', '("done","cancelled")')
+          .abortSignal(controller.signal),
+        client.from('task_assignees').select('task_id').eq('user_id', userId).eq('active', true)
+          .in('event_id', ids).abortSignal(controller.signal),
+      ])
+      if (owned.error || assigned.error) throw new Error('Не удалось загрузить задачи.')
+      const assignedIds = [...new Set((assigned.data ?? []).map((row) => row.task_id))]
+      let assignedTasks: PersonalTask[] = []
+      for (let i = 0; i < assignedIds.length; i += 100) {
+        const response = await client.from('tasks').select('id,event_id,title,status,due_at,owner_id')
+          .in('id', assignedIds.slice(i, i + 100)).in('event_id', ids)
+          .not('status', 'in', '("done","cancelled")').abortSignal(controller.signal)
+        if (response.error) throw new Error('Не удалось загрузить назначенные задачи.')
+        assignedTasks = assignedTasks.concat((response.data ?? []) as PersonalTask[])
+      }
+      const tasks = [...new Map([...((owned.data ?? []) as PersonalTask[]), ...assignedTasks]
+        .map((task) => [task.id, task])).values()]
+      if (!controller.signal.aborted) setState({ data: { events, tasks } })
     })().catch(() => {
       if (!controller.signal.aborted) setState({ error: 'Не удалось загрузить рабочий стол.' })
     })
@@ -63,42 +88,39 @@ function PersonalDashboard({ client, userId }: EventReader) {
   if (!state) return <p role="status">Загружаем рабочий стол…</p>
   if (state.error) return <p role="alert" className="message error">{state.error}</p>
 
-  const workspaces = state.data ?? []
+  const { events, tasks } = state.data ?? { events: [], tasks: [] }
+  const eventNames = new Map(events.map((event) => [event.id, event.name]))
   const now = Date.now()
-  const mine = workspaces.flatMap((model) => model.tasks
-    .filter((task) => (task.owner_id === userId || model.assignedTasks.has(task.id)) &&
-      task.status !== 'done' && task.status !== 'cancelled')
-    .map((task) => ({ task, model })))
-  const overdue = mine.filter(({ task }) => isOverdue(task, now)).length
-  const today = mine.filter(({ task }) => task.due_at && !isOverdue(task, now) &&
+  const overdue = tasks.filter((task) => isOverdue(task as Task, now)).length
+  const today = tasks.filter((task) => task.due_at && !isOverdue(task as Task, now) &&
     deadlineDay(task.due_at) === deadlineDay(new Date(now).toISOString())).length
-  const ordered = [...mine].sort((a, b) =>
-    (a.task.due_at ? Date.parse(a.task.due_at) : Infinity) -
-    (b.task.due_at ? Date.parse(b.task.due_at) : Infinity))
+  const ordered = [...tasks].sort((a, b) =>
+    (a.due_at ? Date.parse(a.due_at) : Infinity) -
+    (b.due_at ? Date.parse(b.due_at) : Infinity))
 
   return <div className="dashboard">
     <div className="section-heading"><h1>Мой рабочий стол</h1><Link to="/events">Все мероприятия</Link></div>
     <ul className="card-grid metric-grid">
-      <li className="panel metric"><strong>{mine.length}</strong><span>Мои открытые задачи</span></li>
+      <li className="panel metric"><strong>{tasks.length}</strong><span>Мои открытые задачи</span></li>
       <li className="panel metric"><strong>{today}</strong><span>Срок сегодня</span></li>
       <li className="panel metric"><strong>{overdue}</strong><span>Просрочено</span></li>
     </ul>
     <section>
       <h2>Мои задачи</h2>
       {ordered.length === 0 ? <p className="message">Нет открытых задач, назначенных вам.</p> :
-        <ul className="card-grid">{ordered.slice(0, 20).map(({ task, model }) =>
+        <ul className="card-grid">{ordered.slice(0, 20).map((task) =>
           <li className="panel" key={task.id}>
-            <Link className="card-title" to={`/events/${model.event.id}/tasks/${task.id}`}>{task.title}</Link>
-            <p>{model.event.name} · {taskStatuses[task.status]}</p>
-            {task.due_at && <p>{isOverdue(task, now) ? 'Просрочено · ' : 'Срок · '}{formatDate(task.due_at)}</p>}
+            <Link className="card-title" to={`/events/${task.event_id}/tasks/${task.id}`}>{task.title}</Link>
+            <p>{eventNames.get(task.event_id)} · {taskStatuses[task.status]}</p>
+            {task.due_at && <p>{isOverdue(task as Task, now) ? 'Просрочено · ' : 'Срок · '}{formatDate(task.due_at)}</p>}
           </li>)}</ul>}
       {ordered.length > 20 && <p>Показаны первые 20 задач по сроку.</p>}
     </section>
     <section>
       <h2>Мои мероприятия</h2>
-      <ul className="card-grid">{workspaces.map((model) => <li className="panel" key={model.event.id}>
-        <Link className="card-title" to={`/events/${model.event.id}`}>{model.event.name}</Link>
-        <p>{model.coordinator ? 'Координатор' : 'Участник'} · {formatDate(model.event.starts_at)}</p>
+      <ul className="card-grid">{events.map((event) => <li className="panel" key={event.id}>
+        <Link className="card-title" to={`/events/${event.id}`}>{event.name}</Link>
+        <p>{formatDate(event.starts_at)}</p>
       </li>)}</ul>
     </section>
   </div>
