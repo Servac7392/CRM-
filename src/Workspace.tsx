@@ -46,6 +46,9 @@ export default function Workspace({ client, userId, onSignOut, signOutFailed }: 
 }
 
 type PersonalTask = Pick<Task, 'id' | 'title' | 'status' | 'due_at' | 'owner_id'> & { event_id: string }
+function isPersonalTaskOverdue(task: PersonalTask, now: number) {
+  return task.due_at !== null && Date.parse(task.due_at) < now
+}
 type PersonalData = { events: EventSummary[]; tasks: PersonalTask[] }
 
 function PersonalDashboard({ client, userId }: EventReader) {
@@ -91,8 +94,8 @@ function PersonalDashboard({ client, userId }: EventReader) {
   const { events, tasks } = state.data ?? { events: [], tasks: [] }
   const eventNames = new Map(events.map((event) => [event.id, event.name]))
   const now = Date.now()
-  const overdue = tasks.filter((task) => isOverdue(task as Task, now)).length
-  const today = tasks.filter((task) => task.due_at && !isOverdue(task as Task, now) &&
+  const overdue = tasks.filter((task) => isPersonalTaskOverdue(task, now)).length
+  const today = tasks.filter((task) => task.due_at && !isPersonalTaskOverdue(task, now) &&
     deadlineDay(task.due_at) === deadlineDay(new Date(now).toISOString())).length
   const ordered = [...tasks].sort((a, b) =>
     (a.due_at ? Date.parse(a.due_at) : Infinity) -
@@ -112,7 +115,7 @@ function PersonalDashboard({ client, userId }: EventReader) {
           <li className="panel" key={task.id}>
             <Link className="card-title" to={`/events/${task.event_id}/tasks/${task.id}`}>{task.title}</Link>
             <p>{eventNames.get(task.event_id)} · {taskStatuses[task.status]}</p>
-            {task.due_at && <p>{isOverdue(task as Task, now) ? 'Просрочено · ' : 'Срок · '}{formatDate(task.due_at)}</p>}
+            {task.due_at && <p>{isPersonalTaskOverdue(task, now) ? 'Просрочено · ' : 'Срок · '}{formatDate(task.due_at)}</p>}
           </li>)}</ul>}
       {ordered.length > 20 && <p>Показаны первые 20 задач по сроку.</p>}
     </section>
@@ -406,8 +409,8 @@ function TaskList({ model }: { model: EventWorkspace }) {
       (!owner || owner === task.owner_id) &&
       (!status || status === task.status) &&
       (!leaf || (!parentIds.has(task.id) && task.status !== 'cancelled')) &&
-      (deadline !== 'overdue' || isOverdue(task, now)) &&
-      (deadline !== 'upcoming' || (task.due_at !== null && !isOverdue(task, now) &&
+      (deadline !== 'overdue' || isPersonalTaskOverdue(task, now)) &&
+      (deadline !== 'upcoming' || (task.due_at !== null && !isPersonalTaskOverdue(task, now) &&
         task.status !== 'done' && task.status !== 'cancelled'))
   }).sort((a, b) => (a.due_at ? Date.parse(a.due_at) : Infinity) -
     (b.due_at ? Date.parse(b.due_at) : Infinity) || a.title.localeCompare(b.title, 'ru'))
