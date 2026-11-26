@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env*
+!.env.example
+/Event_CRM_TZ.md
+/stage-1-review/
