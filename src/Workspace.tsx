@@ -53,13 +53,18 @@ type PersonalData = { events: EventSummary[]; tasks: PersonalTask[] }
 
 function PersonalDashboard({ client, userId }: EventReader) {
   const [state, setState] = useState<RequestState<PersonalData>>(null)
+  const [tasksLoading, setTasksLoading] = useState(true)
+  const [tasksError, setTasksError] = useState(false)
   useEffect(() => {
     const controller = new AbortController()
+    setTasksLoading(true)
+    setTasksError(false)
     void (async () => {
       const events = (await loadEvents(client, controller.signal)).filter((event) => event.status !== 'archived')
+      if (!controller.signal.aborted) setState({ data: { events, tasks: [] } })
       const ids = events.map((event) => event.id)
       if (ids.length === 0) {
-        if (!controller.signal.aborted) setState({ data: { events, tasks: [] } })
+        if (!controller.signal.aborted) setTasksLoading(false)
         return
       }
       const [owned, assigned] = await Promise.all([
@@ -81,9 +86,16 @@ function PersonalDashboard({ client, userId }: EventReader) {
       }
       const tasks = [...new Map([...((owned.data ?? []) as PersonalTask[]), ...assignedTasks]
         .map((task) => [task.id, task])).values()]
-      if (!controller.signal.aborted) setState({ data: { events, tasks } })
+      if (!controller.signal.aborted) {
+        setState({ data: { events, tasks } })
+        setTasksLoading(false)
+      }
     })().catch(() => {
-      if (!controller.signal.aborted) setState({ error: 'Не удалось загрузить рабочий стол.' })
+      if (!controller.signal.aborted) {
+        setState((current) => current?.data ? current : { error: 'Не удалось загрузить мероприятия.' })
+        setTasksError(true)
+        setTasksLoading(false)
+      }
     })
     return () => controller.abort()
   }, [client, userId])
@@ -104,13 +116,13 @@ function PersonalDashboard({ client, userId }: EventReader) {
   return <div className="dashboard">
     <div className="section-heading"><h1>Мой рабочий стол</h1><Link to="/events">Все мероприятия</Link></div>
     <ul className="card-grid metric-grid">
-      <li className="panel metric"><strong>{tasks.length}</strong><span>Мои открытые задачи</span></li>
-      <li className="panel metric"><strong>{today}</strong><span>Срок сегодня</span></li>
-      <li className="panel metric"><strong>{overdue}</strong><span>Просрочено</span></li>
+      <li className="panel metric"><strong>{tasksLoading ? "…" : tasksError ? "—" : tasks.length}</strong><span>Мои открытые задачи</span></li>
+      <li className="panel metric"><strong>{tasksLoading ? "…" : tasksError ? "—" : today}</strong><span>Срок сегодня</span></li>
+      <li className="panel metric"><strong>{tasksLoading ? "…" : tasksError ? "—" : overdue}</strong><span>Просрочено</span></li>
     </ul>
     <section>
       <h2>Мои задачи</h2>
-      {ordered.length === 0 ? <p className="message">Нет открытых задач, назначенных вам.</p> :
+      {tasksLoading ? <p role="status">Загружаем задачи…</p> : tasksError ? <p role="alert" className="message error">Не удалось загрузить задачи. Обновите страницу для повторной попытки.</p> : ordered.length === 0 ? <p className="message">Нет открытых задач, назначенных вам.</p> :
         <ul className="card-grid">{ordered.slice(0, 20).map((task) =>
           <li className="panel" key={task.id}>
             <Link className="card-title" to={`/events/${task.event_id}/tasks/${task.id}`}>{task.title}</Link>
